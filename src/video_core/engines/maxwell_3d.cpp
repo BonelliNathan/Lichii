@@ -349,7 +349,7 @@ void Maxwell3D::ConsumeSinkImpl(Core::System& system) {
     method_sink.clear();
 }
 
-// register_count is stored and its dirty flag is set, and the renderer never reads it.
+// register_count is stored and dirtied. Nothing a draw resolves reads it.
 // reserved[0] and reserved[1] are the shader id and still end the chain.
 bool IsShaderRegisterCount(u32 method) {
     constexpr u32 base = MAXWELL3D_REG_INDEX(pipelines);
@@ -367,15 +367,22 @@ bool IsShaderRegisterCount(u32 method) {
     return delta % words == register_count_word;
 }
 
-// Nothing in the renderer reads these words. The value is still stored.
+// Nothing a draw resolves reads these words. The value is still stored.
 bool IsConstantColorRendering(u32 method) {
     constexpr u32 base = MAXWELL3D_REG_INDEX(const_color_rendering);
     constexpr u32 words = sizeof(Maxwell3D::Regs::ConstantColorRendering) / sizeof(u32);
     return method >= base && method < base + words;
 }
 
+// address_high, address_low and payload only feed the report. The query word is a method.
+bool IsReportSemaphoreOperand(u32 method) {
+    constexpr u32 base = MAXWELL3D_REG_INDEX(report_semaphore);
+    return method >= base && method < base + 3;
+}
+
 bool Maxwell3D::IsFastDrawParameter(u32 method) {
-    if (IsShaderRegisterCount(method) || IsConstantColorRendering(method)) {
+    if (IsShaderRegisterCount(method) || IsConstantColorRendering(method) ||
+        IsReportSemaphoreOperand(method)) {
         return true;
     }
     switch (method) {
@@ -403,8 +410,9 @@ bool Maxwell3D::IsFastDrawQueryMethod(u32 method) {
     // None of these is state a delta draw keeps. The draw manager asks ShouldExecute for every
     // draw, every draw resumes the counters and host conditional rendering (NotifySegment,
     // CounterEnable), and a resolve that leaves the render pass ends the delta chain there.
-    // A report semaphore still runs (ProcessQueryGet) and still notes a sync, so uniform keeps
-    // are dropped; it only stops ending the draw chain.
+    // A report still runs (ProcessQueryGet) and still notes a sync, so uniform keeps
+    // are dropped. ProcessQueryGet records the guest write, so a report into texture
+    // or sampler headers still ends the chain.
     return method == MAXWELL3D_REG_INDEX(clear_report_value) ||
            method == MAXWELL3D_REG_INDEX(render_enable.mode) ||
            method == MAXWELL3D_REG_INDEX(report_semaphore.query);
@@ -1065,6 +1073,16 @@ void Maxwell3D::ProcessQueryGet() {
         flags |= VideoCommon::QueryPropertiesFlags::HasTimeout;
     }
     const GPUVAddr sequence_address{regs.report_semaphore.Address()};
+    // A report writes guest memory. Record that range so a write into texture or sampler
+    // headers still ends the fast-draw chain (NoteFastDrawConstantData).
+    if (sequence_address != 0 && VideoCommon::Nx2FastDraw::Enabled()) {
+        const auto operation = regs.report_semaphore.query.operation.Value();
+        if (operation == Regs::ReportSemaphore::Operation::Release ||
+            operation == Regs::ReportSemaphore::Operation::ReportOnly) {
+            const u64 bytes = regs.report_semaphore.query.short_query != 0 ? 4 : 16;
+            NoteFastDrawConstantData(sequence_address, sequence_address + bytes);
+        }
+    }
     const VideoCommon::QueryType query_type =
         static_cast<VideoCommon::QueryType>(regs.report_semaphore.query.report.Value());
     const u32 payload = regs.report_semaphore.payload;
