@@ -372,11 +372,14 @@ bool Maxwell3D::IsFastDrawParameter(u32 method) {
 }
 
 bool Maxwell3D::IsFastDrawQueryMethod(u32 method) {
-    // Neither is in what a delta draw keeps: the draw manager asks ShouldExecute for every draw,
-    // every draw resumes the counters and host conditional rendering (NotifySegment,
+    // None of these is state a delta draw keeps. The draw manager asks ShouldExecute for every
+    // draw, every draw resumes the counters and host conditional rendering (NotifySegment,
     // CounterEnable), and a resolve that leaves the render pass ends the delta chain there.
+    // A report semaphore still runs (ProcessQueryGet) and still notes a sync, so uniform keeps
+    // are dropped; it only stops ending the draw chain.
     return method == MAXWELL3D_REG_INDEX(clear_report_value) ||
-           method == MAXWELL3D_REG_INDEX(render_enable.mode);
+           method == MAXWELL3D_REG_INDEX(render_enable.mode) ||
+           method == MAXWELL3D_REG_INDEX(report_semaphore.query);
 }
 
 bool Maxwell3D::IsFastDrawVertexFormat(u32 method) {
