@@ -880,7 +880,9 @@ void ASTCDecoderPass::FlushPending() {
     if (!scheduler.RecordedSinceSubmit()) {
         queued_decodes = 0;
         if (!AstcFlushOnly()) {
+            const auto start = std::chrono::steady_clock::now();
             scheduler.Finish();
+            AccountQueuedDecode(false, std::chrono::steady_clock::now() - start);
         }
         return;
     }
