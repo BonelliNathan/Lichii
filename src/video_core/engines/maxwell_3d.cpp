@@ -367,8 +367,15 @@ bool IsShaderRegisterCount(u32 method) {
     return delta % words == register_count_word;
 }
 
+// Nothing in the renderer reads these words. The value is still stored.
+bool IsConstantColorRendering(u32 method) {
+    constexpr u32 base = MAXWELL3D_REG_INDEX(const_color_rendering);
+    constexpr u32 words = sizeof(Maxwell3D::Regs::ConstantColorRendering) / sizeof(u32);
+    return method >= base && method < base + words;
+}
+
 bool Maxwell3D::IsFastDrawParameter(u32 method) {
-    if (IsShaderRegisterCount(method)) {
+    if (IsShaderRegisterCount(method) || IsConstantColorRendering(method)) {
         return true;
     }
     switch (method) {
